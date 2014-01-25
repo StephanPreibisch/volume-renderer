@@ -40,6 +40,7 @@ import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.basictypeaccess.array.FloatArray;
 import net.imglib2.img.basictypeaccess.array.IntArray;
 import net.imglib2.img.cell.CellImgFactory;
+import net.imglib2.interpolation.randomaccess.LanczosInterpolatorFactory;
 import net.imglib2.interpolation.randomaccess.NLinearInterpolatorFactory;
 import net.imglib2.interpolation.randomaccess.NearestNeighborInterpolatorFactory;
 import net.imglib2.realtransform.AffineGet;
@@ -55,6 +56,7 @@ import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.AbstractARGBDoubleType;
 import net.imglib2.type.numeric.NativeARGBDoubleType;
 import net.imglib2.type.numeric.NumericType;
+import net.imglib2.type.numeric.RealType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
 import net.imglib2.view.composite.CompositeView;
@@ -67,7 +69,7 @@ import net.imglib2.view.composite.RealComposite;
  */
 public class Renderer
 {
-	public enum Interpolation { NN, NL };
+	public enum Interpolation { NN, NL, LC };
 	public enum Anaglyph { RedCyan, RedGreen, GreenMagenta };
 	
 	static protected < T extends NumericType< ? > > void render(
@@ -391,6 +393,7 @@ public class Renderer
 		transformSequence.add( centerUnshiftXY );
 	}
 	
+	@SuppressWarnings({ "unchecked", "rawtypes" })
 	final static protected < T extends NumericType< T > > RandomAccessible< T > buildTransformedSource(
 			final RandomAccessible< T > source,
 			final InvertibleRealTransform transform,
@@ -399,6 +402,14 @@ public class Renderer
 		final RealRandomAccessible< T > interpolant;
 		switch ( interpolationMethod )
 		{
+			case LC:
+			{
+				if ( source.randomAccess().get() instanceof RealType )
+					interpolant = Views.interpolate( source, new LanczosInterpolatorFactory() );
+				else
+					throw new RuntimeException( "LanczosInterpolation only possible for RealTypes." );
+				break;
+			}
 			case NL:
 				interpolant = Views.interpolate( source, new NLinearInterpolatorFactory< T >() );
 				break;
@@ -541,6 +552,7 @@ public class Renderer
 	 * @param interpolationMethod 0 NN, 1 NL
 	 * @param alphaScale scale factor for linear intensity to alpha transfer 
 	 * @param alphaOffset offset for linear intensity to alpha transfer
+	 * @param antiArtifactRendering Render two images with a slight z-offset to reduce artifacts on flat surfaces
 	 * 
 	 * @return
 	 */
@@ -559,7 +571,8 @@ public class Renderer
 			final double min,
 			final double max,
 			final double alphaScale,
-			final double alphaOffset )
+			final double alphaOffset, 
+			final boolean antiArtifactRendering )
 	{
 		/* copy contents into most appropriate container */
 		final Img< FloatType > img = floatCopyImagePlus( impSource );
@@ -573,45 +586,70 @@ public class Renderer
 				img.dimension( 1 ) + " " +
 				img.dimension( 2 ) );
 		
-		/* build transformation */
-		final AffineTransform3D affine = buildAffineTransform(
-				orientation,
-				img.dimension( 0 ),
-				img.dimension( 1 ),
-				img.dimension( 2 ),
-				f );
+		final double[] offsets;
 		
-		final InvertibleRealTransformSequence transformSequence = new InvertibleRealTransformSequence();
-		
-		transformSequence.add( affine );
-		
-		appendCamera(
-				transformSequence,
-				width,
-				height,
-				img.dimension( 2 ),
-				f,
-				offset );
-		
-		/* build source */
-		final RandomAccessible< FloatType > rotated = buildTransformedSource( img, transformSequence, interpolationMethod );
-		
-		/* accumulator */
-		final AlphaIntensityLayers< FloatType > accumulator = new AlphaIntensityLayers< FloatType >( alphaScale, alphaOffset );
-		
-		/* calculate boundaries */
-		final FinalRealInterval bounds = affine.estimateBounds( img );
-		final long minZ	= ( long )Math.floor( bounds.realMin( 2 ) );
-		final long maxZ	= ( long )Math.ceil( bounds.realMax( 2 ) );
+		if ( antiArtifactRendering )
+			offsets = new double[]{ -0.25, +0.25 };
+		else
+			offsets = new double[]{ 0.0 };
 		
 		/* build target */
-		final float[] floatPixels = new float[ width * height ];
-		final ArrayImg< FloatType, FloatArray > floatCanvas = ArrayImgs.floats( floatPixels, width, height );
+		final float[][] floatPixels = new float[ offsets.length ][ width * height ];
+
+		for ( int o = 0; o < offsets.length; ++o )
+		{		
+			/* build transformation */
+			final AffineTransform3D affine = buildAffineTransform(
+					orientation,
+					img.dimension( 0 ),
+					img.dimension( 1 ),
+					img.dimension( 2 ),
+					f );
+			
+			final InvertibleRealTransformSequence transformSequence = new InvertibleRealTransformSequence();
+			
+			transformSequence.add( affine );
+			
+			appendCamera(
+					transformSequence,
+					width,
+					height,
+					img.dimension( 2 ),
+					f,
+					offset );
+			
+			if ( offsets[ o ] != 0.0 )
+				transformSequence.add( new Translation3D( 0, 0, offsets[ o ] ) );
+			
+			/* build source */
+			final RandomAccessible< FloatType > rotated = buildTransformedSource( img, transformSequence, interpolationMethod );
+			
+			/* accumulator */
+			final AlphaIntensityLayers< FloatType > accumulator = new AlphaIntensityLayers< FloatType >( alphaScale, alphaOffset );
+			
+			/* calculate boundaries */
+			final FinalRealInterval bounds = affine.estimateBounds( img );
+			final long minZ	= ( long )Math.floor( bounds.realMin( 2 ) );
+			final long maxZ	= ( long )Math.ceil( bounds.realMax( 2 ) );
+			
+			final ArrayImg< FloatType, FloatArray > floatCanvas = ArrayImgs.floats( floatPixels[ o ], width, height );
+			
+			/* render */
+			render( rotated, floatCanvas, minZ, maxZ, stepSize, bg, accumulator );
+		}
 		
-		/* render */
-		render( rotated, floatCanvas, minZ, maxZ, stepSize, bg, accumulator );
 		
-		final FloatProcessor fp = new FloatProcessor( width, height, floatPixels );
+		if ( offsets.length > 1 )
+		{
+			for ( int o = 1; o < offsets.length; ++o )
+				for ( int i = 0; i < floatPixels[ 0 ].length; ++i )
+					floatPixels[ 0 ][ i ] += floatPixels[ o ][ i ];
+			
+			for ( int i = 0; i < floatPixels[ 0 ].length; ++i )
+				floatPixels[ 0 ][ i ] /= (float)offsets.length;
+		}
+		
+		final FloatProcessor fp = new FloatProcessor( width, height, floatPixels[ 0 ] );
 //		new ImagePlus( impSource.getTitle(), fp ).show();
 		fp.setMinAndMax( min, max );
 		final ByteProcessor bp = ( ByteProcessor )fp.convertToByte( true );
@@ -932,8 +970,6 @@ public class Renderer
 		return omp;
 	}
 	
-	
-	
 	final static public void main( final String[] args ) throws Exception
 	{
 		new ImageJ();
@@ -965,7 +1001,8 @@ public class Renderer
 				0,
 				0.06,
 				1.0 / 0.1,
-				-0.005 );
+				-0.005,
+				false );
 		omp.show();
 		
 		

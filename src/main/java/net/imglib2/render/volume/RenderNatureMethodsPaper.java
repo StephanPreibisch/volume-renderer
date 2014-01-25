@@ -12,6 +12,7 @@ import java.util.Iterator;
 import ij.ImageJ;
 import ij.ImagePlus;
 import ij.io.FileSaver;
+import ij.process.ColorProcessor;
 import ij.process.FloatProcessor;
 import ij.process.FloodFiller;
 import ij.process.ImageProcessor;
@@ -34,6 +35,7 @@ import net.imglib2.realtransform.Translation3D;
 import net.imglib2.render.volume.Renderer.Interpolation;
 import net.imglib2.type.Type;
 import net.imglib2.type.logic.BitType;
+import net.imglib2.type.numeric.ARGBType;
 import net.imglib2.type.numeric.IntegerType;
 import net.imglib2.type.numeric.integer.IntType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
@@ -216,9 +218,9 @@ public class RenderNatureMethodsPaper
 		// flood fill the interors
 		final FloatProcessor fp = new FloatProcessor( imp.getWidth(), imp.getHeight(), outlinePx );
 		f = new FloodFiller( fp );
-		fp.setValue( (float)fg / 3.0f );
-		//f.fill( verticalLine - 1, posL );
-		//f.fill( verticalLine + 1, posR );
+		fp.setValue( (float)fg / 30.0f );
+		f.fill( verticalLine - 1, posL );
+		f.fill( verticalLine + 1, posR );
 		
 		// smooth the outline a little
 		Gauss3.gauss( 0.6, Views.extendZero( outline ), outline );
@@ -332,6 +334,37 @@ public class RenderNatureMethodsPaper
 		return omp;
 	}
 	
+	public static ImagePlus combineOutlineImage( final ImagePlus image, final ImagePlus outline )
+	{
+		final long[] dim = new long[]{ image.getWidth(), image.getHeight() };
+		
+		final int[] px = new int[ image.getWidth() * image.getHeight() ];
+		final Img< ARGBType > out = ArrayImgs.argbs( px, dim );
+		
+		final Img< UnsignedByteType > img = ArrayImgs.unsignedBytes( (byte[])image.getProcessor().getPixels(), dim );
+		final Img< UnsignedByteType > line = ArrayImgs.unsignedBytes( (byte[])outline.getProcessor().getPixels(), dim );
+		
+		final Cursor< UnsignedByteType > c1 = img.cursor();
+		final Cursor< UnsignedByteType > c2 = line.cursor();
+		
+		for ( final ARGBType t : out )
+		{
+			int i = c1.next().get();
+			float w = (float)c2.next().get()/(float)255;
+			
+			int r = Math.round( Math.max( i, w*255 ) );
+			int g = Math.round( i - i*w );
+			int b = Math.round( i - i*w );
+			
+			t.set( ARGBType.rgba( r, g, b, 0 ) );
+			
+			//int r = Math.max(0, i-w);
+			//t.set( ARGBType.rgba( Math.max( r, w ), r, r, 0 ) );
+		}
+		
+		return new ImagePlus( "combined", new ColorProcessor( image.getWidth(), image.getHeight(), px ) );
+	}
+	
 	final static public void main( final String[] args ) throws Exception
 	{
 		new ImageJ();
@@ -357,6 +390,9 @@ public class RenderNatureMethodsPaper
 		
 		ImagePlus image = renderInverseCorner( imp, t, sizeX, sizeY, sliceXY, sliceYZ );
 		image.show();
+		
+		ImagePlus result = combineOutlineImage( image, outline );
+		result.show();
 		
 		//final Img< FloatType > img = ImageJFunctions.wrapFloat( imp );
 

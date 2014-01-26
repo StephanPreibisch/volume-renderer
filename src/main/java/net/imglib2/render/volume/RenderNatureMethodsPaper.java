@@ -1,43 +1,32 @@
 package net.imglib2.render.volume;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.util.Iterator;
-
 import ij.ImageJ;
 import ij.ImagePlus;
 import ij.io.FileSaver;
 import ij.process.ColorProcessor;
 import ij.process.FloatProcessor;
 import ij.process.FloodFiller;
-import ij.process.ImageProcessor;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
 import net.imglib2.RandomAccessibleInterval;
-import net.imglib2.algorithm.gauss.Gauss;
 import net.imglib2.algorithm.gauss3.Gauss3;
-import net.imglib2.algorithm.labeling.AllConnectedComponents;
 import net.imglib2.exception.IncompatibleTypeException;
 import net.imglib2.img.Img;
-import net.imglib2.img.array.ArrayImg;
-import net.imglib2.img.array.ArrayImgFactory;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.display.imagej.ImageJFunctions;
-import net.imglib2.labeling.NativeImgLabeling;
-import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.Translation3D;
 import net.imglib2.render.volume.Renderer.Interpolation;
 import net.imglib2.type.Type;
-import net.imglib2.type.logic.BitType;
 import net.imglib2.type.numeric.ARGBType;
-import net.imglib2.type.numeric.IntegerType;
-import net.imglib2.type.numeric.integer.IntType;
 import net.imglib2.type.numeric.integer.UnsignedByteType;
 import net.imglib2.type.numeric.real.FloatType;
 import net.imglib2.view.Views;
@@ -60,7 +49,6 @@ public class RenderNatureMethodsPaper
 	public static < T extends Type< T > > void paintOutCubeIntersect( final RandomAccessibleInterval< T > img, final int[] dim, final long[] from, final long[] to, final T value )
 	{
 		final Cursor< T > cursor = Views.iterable( img ).localizingCursor();
-		final int n = img.numDimensions();
 		
 		while ( cursor.hasNext() )
 		{
@@ -334,7 +322,7 @@ public class RenderNatureMethodsPaper
 		return omp;
 	}
 	
-	public static ImagePlus combineOutlineImage( final ImagePlus image, final ImagePlus outline )
+	public static ImagePlus combineOutlineImage( final ImagePlus image, final ImagePlus outline, final ARGBType overlayColor )
 	{
 		final long[] dim = new long[]{ image.getWidth(), image.getHeight() };
 		
@@ -347,19 +335,21 @@ public class RenderNatureMethodsPaper
 		final Cursor< UnsignedByteType > c1 = img.cursor();
 		final Cursor< UnsignedByteType > c2 = line.cursor();
 		
+		final float or = ARGBType.red( overlayColor.get() ) / 255.0f;
+		final float og = ARGBType.green( overlayColor.get() ) / 255.0f;
+		final float ob = ARGBType.blue( overlayColor.get() ) / 255.0f;
+		
 		for ( final ARGBType t : out )
 		{
-			int i = c1.next().get();
-			float w = (float)c2.next().get()/(float)255;
-			
-			int r = Math.round( Math.max( i, w*255 ) );
-			int g = Math.round( i - i*w );
-			int b = Math.round( i - i*w );
-			
+			final int i = c1.next().get();
+			final int wi = c2.next().get();
+			final float w = (float)wi/(float)255;
+
+			final int r = Math.round( Math.max( i - i*w*og - i*w*ob,  wi*or ) );
+			final int g = Math.round( Math.max( i - i*w*or - i*w*ob,  wi*og ) );
+			final int b = Math.round( Math.max( i - i*w*or - i*w*og,  wi*ob ) );
+						
 			t.set( ARGBType.rgba( r, g, b, 0 ) );
-			
-			//int r = Math.max(0, i-w);
-			//t.set( ARGBType.rgba( Math.max( r, w ), r, r, 0 ) );
 		}
 		
 		return new ImagePlus( "combined", new ColorProcessor( image.getWidth(), image.getHeight(), px ) );
@@ -384,6 +374,7 @@ public class RenderNatureMethodsPaper
 		final int sliceYZ = 145;
 		
 		final int verticalLine = computeVerticalLine( imp, t, sizeX, sizeY, sliceXY, sliceYZ );
+		final ARGBType overlayColor = new ARGBType( ARGBType.rgba( 255, 0, 0, 0 ) );
 		
 		ImagePlus outline = renderOutline( imp, t, sizeX, sizeY, sliceXY, sliceYZ, verticalLine );
 		outline.show();
@@ -391,7 +382,8 @@ public class RenderNatureMethodsPaper
 		ImagePlus image = renderInverseCorner( imp, t, sizeX, sizeY, sliceXY, sliceYZ );
 		image.show();
 		
-		ImagePlus result = combineOutlineImage( image, outline );
+		
+		ImagePlus result = combineOutlineImage( image, outline, overlayColor );
 		result.show();
 		
 		//final Img< FloatType > img = ImageJFunctions.wrapFloat( imp );

@@ -1,18 +1,27 @@
 package net.imglib2.render.volume;
 
+import ij.IJ;
 import ij.ImageJ;
 import ij.ImagePlus;
 import ij.io.FileSaver;
+import ij.process.ByteProcessor;
 import ij.process.ColorProcessor;
 import ij.process.FloatProcessor;
 import ij.process.FloodFiller;
+import ij.process.ImageProcessor;
 
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.font.FontRenderContext;
+import java.awt.geom.Rectangle2D;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.Arrays;
 
 import net.imglib2.Cursor;
 import net.imglib2.RandomAccess;
@@ -22,6 +31,7 @@ import net.imglib2.exception.IncompatibleTypeException;
 import net.imglib2.img.Img;
 import net.imglib2.img.array.ArrayImgs;
 import net.imglib2.img.display.imagej.ImageJFunctions;
+import net.imglib2.multithreading.SimpleMultiThreading;
 import net.imglib2.realtransform.AffineTransform3D;
 import net.imglib2.realtransform.Translation3D;
 import net.imglib2.render.volume.Renderer.Interpolation;
@@ -115,11 +125,95 @@ public class RenderNatureMethodsPaper
 		return omp;
 	}
 	
+	public static int drawTextBottomRight( final ByteProcessor bp, final int border, final String text, final Font font )
+	{
+		final Rectangle2D r = font.getStringBounds( text, ((Graphics2D)bp.getBufferedImage().getGraphics()).getFontRenderContext() );
+		bp.setFont( font ); 
+		bp.setColor( Color.white );
+		bp.setAntialiasedText( true );
+		bp.drawString( text, bp.getWidth() - border - (int)Math.round( r.getWidth() ), bp.getHeight() - border + (int)Math.round( r.getHeight() + r.getY() ));
+		
+		return (int)Math.round( r.getWidth() );
+	}
+
+	public static ImagePlus renderPlanes( final ImagePlus imp3d, final AffineTransform3D t, 
+			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ )
+	{
+		final int borderXY = 37;
+		final int borderYZ = 40;
+		final Font font = new Font( "Arial", Font.PLAIN, 24 );
+		final String xy = "XY";
+		final String yz = "YZ";
+		
+		final File file = new File( "plane" + makeFileName( sizeX, sizeY, sliceXY, sliceYZ ) + ".tif" );
+		
+		if ( file.exists() )
+			return new ImagePlus( file.getAbsolutePath() );
+
+		final ImagePlus imp = imp3d.duplicate();
+		final Img< FloatType > img = ImageJFunctions.wrapFloat( imp );
+
+		// clear the image
+		for ( final FloatType f : img )
+			f.set( 0 );
+
+		// draw the text
+		final ByteProcessor bpXY = new ByteProcessor( imp3d.getWidth(), imp3d.getHeight() );
+		final ByteProcessor bpYZ = new ByteProcessor( imp3d.getWidth(), imp3d.getHeight() );
+
+		drawTextBottomRight( bpXY, borderXY, xy, font );
+		final int widthTextYZ = drawTextBottomRight( bpYZ, borderYZ, yz, font );
+		
+		// add the xy slice
+		final RandomAccess< FloatType > rXY = Views.hyperSlice( img, 2, sliceXY ).randomAccess();
+		final Cursor< UnsignedByteType > cXY  = ArrayImgs.unsignedBytes( (byte[])bpXY.getPixels(), imp3d.getWidth(), imp3d.getHeight() ).localizingCursor();
+		
+		while ( cXY.hasNext() )
+		{
+			cXY.fwd();
+			rXY.setPosition( cXY );
+			rXY.get().set( cXY.get().get() / 255.0f );
+		}
+
+		// add the yz slice
+		final RandomAccess< FloatType > rYZ = Views.extendZero( Views.hyperSlice( img, 0, sliceYZ ) ).randomAccess();
+		final Cursor< UnsignedByteType > cYZ  = ArrayImgs.unsignedBytes( (byte[])bpYZ.getPixels(), imp3d.getWidth(), imp3d.getHeight() ).localizingCursor();
+		
+		while ( cYZ.hasNext() )
+		{
+			cYZ.fwd();
+			rYZ.setPosition( cYZ.getIntPosition( 1 ), 0 );
+			rYZ.setPosition( cYZ.getIntPosition( 0 ) - imp.getHeight() + 2*borderYZ + widthTextYZ, 1 );
+			rYZ.get().set( cYZ.get().get() / 255.0f );
+		}
+		
+		final ImagePlus omp = Renderer.runGray(
+				imp,
+				sizeX,
+				sizeY,
+				t,
+				0,
+				1,
+				new Translation3D(),
+				1,
+				0,
+				Interpolation.LC,
+				0,
+				0.5,
+				1.0,
+				0.0,
+				true );
+		
+		new FileSaver( omp ).saveAsTiff( file.getAbsolutePath() );
+		
+		return omp;
+	}
+
 	public static ImagePlus renderOutline( final ImagePlus imp3d, final AffineTransform3D t, 
 			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ, final int verticalLine ) throws IncompatibleTypeException
 	{
-		final ImagePlus imp = renderCornerSlices( imp3d, t, sizeX, sizeY, sliceXY, sliceYZ );	
-		final Img< UnsignedByteType > input = ImageJFunctions.wrapByte( imp );
+		final ImagePlus cornerSlices = renderCornerSlices( imp3d, t, sizeX, sizeY, sliceXY, sliceYZ );	
+		final Img< UnsignedByteType > input = ImageJFunctions.wrapByte( cornerSlices );
 		
 		// make binary (0=bg, 1=fg)
 		final int imgBg = 5;
@@ -133,13 +227,13 @@ public class RenderNatureMethodsPaper
 		
 		// flood-fill background (real outside = 2)
 		final int outside = 2;
-		FloodFiller f = new FloodFiller( imp.getProcessor() );
-		imp.getProcessor().setValue( outside );
+		FloodFiller f = new FloodFiller( cornerSlices.getProcessor() );
+		cornerSlices.getProcessor().setValue( outside );
 		f.fill( 0, 0 );
 		
 		// find and draw outline
-		final float[] outlinePx = new float[ imp.getWidth() * imp.getHeight() ];
-		final Img< FloatType > outline = ArrayImgs.floats( outlinePx, new long[]{ imp.getWidth(), imp.getHeight() } );//input.factory().imgFactory( new FloatType() ).create( input, new FloatType() );
+		final float[] outlinePx = new float[ cornerSlices.getWidth() * cornerSlices.getHeight() ];
+		final Img< FloatType > outline = ArrayImgs.floats( outlinePx, new long[]{ cornerSlices.getWidth(), cornerSlices.getHeight() } );//input.factory().imgFactory( new FloatType() ).create( input, new FloatType() );
 		final Cursor< UnsignedByteType > cursor = input.localizingCursor();
 		final RandomAccess< UnsignedByteType > randomAccess = Views.extendValue( input, new UnsignedByteType(2) ).randomAccess();
 		final RandomAccess< FloatType > outlineR = outline.randomAccess();
@@ -204,17 +298,30 @@ public class RenderNatureMethodsPaper
 		}
 		
 		// flood fill the interors
-		final FloatProcessor fp = new FloatProcessor( imp.getWidth(), imp.getHeight(), outlinePx );
+		final FloatProcessor fp = new FloatProcessor( cornerSlices.getWidth(), cornerSlices.getHeight(), outlinePx );
 		f = new FloodFiller( fp );
 		fp.setValue( (float)fg / 30.0f );
-		f.fill( verticalLine - 1, posL );
-		f.fill( verticalLine + 1, posR );
+		//f.fill( verticalLine - 1, posL );
+		//f.fill( verticalLine + 1, posR );
 		
 		// smooth the outline a little
 		Gauss3.gauss( 0.6, Views.extendZero( outline ), outline );
+
+		// get the labels for the slices and max them into the image
+		final ImagePlus frame = renderPlanes( imp3d, t, sizeX, sizeY, sliceXY, sliceYZ );
+		final ByteProcessor bpOutline = (ByteProcessor)fp.convertToByte( true );
+		
+		final Cursor< UnsignedByteType > c1 = ArrayImgs.unsignedBytes( (byte[])bpOutline.getPixels(), sizeX, sizeY ).cursor();
+		final Cursor< UnsignedByteType > c2 = ArrayImgs.unsignedBytes( (byte[])frame.getProcessor().getPixels(), sizeX, sizeY ).cursor();
+		
+		while ( c1.hasNext() )
+		{
+			c1.fwd(); c2.fwd();
+			c1.get().set( Math.max( c1.get().get(), Math.round( c2.get().get() / 1.25f ) ) );
+		}
 		
 		// display
-		return new ImagePlus( "outline", fp.convertToByte( true ) );
+		return new ImagePlus( "outline", bpOutline );
 	}
 	
 	public static int computeVerticalLine( final ImagePlus imp3d, final AffineTransform3D t, 
@@ -381,7 +488,6 @@ public class RenderNatureMethodsPaper
 		
 		ImagePlus image = renderInverseCorner( imp, t, sizeX, sizeY, sliceXY, sliceYZ );
 		image.show();
-		
 		
 		ImagePlus result = combineOutlineImage( image, outline, overlayColor );
 		result.show();

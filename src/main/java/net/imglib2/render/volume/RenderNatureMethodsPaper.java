@@ -317,7 +317,7 @@ public class RenderNatureMethodsPaper
 		while ( c1.hasNext() )
 		{
 			c1.fwd(); c2.fwd();
-			c1.get().set( Math.max( c1.get().get(), Math.round( c2.get().get() / 1.25f ) ) );
+			c1.get().set( Math.max( Math.min( 255, Math.round( c1.get().get() * 1.25f ) ), Math.round( c2.get().get() / 1.1f ) ) );
 		}
 		
 		// display

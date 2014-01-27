@@ -359,7 +359,7 @@ public class RenderNatureMethodsPaper
 				new Translation3D(),
 				1,
 				0,
-				Interpolation.NN,
+				Interpolation.NL,
 				0,
 				1,
 				1.0,
@@ -394,9 +394,9 @@ public class RenderNatureMethodsPaper
 	}
 	
 	public static ImagePlus renderInverseCorner( final ImagePlus imp3d, final AffineTransform3D t, 
-			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ )
+			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ, final String fileName )
 	{
-		final File file = new File( "inversecorner" + makeFileName( sizeX, sizeY, sliceXY, sliceYZ ) + ".tif" );
+		final File file = new File( "inversecorner_" + fileName + makeFileName( sizeX, sizeY, sliceXY, sliceYZ ) + ".tif" );
 		
 		if ( file.exists() )
 			return new ImagePlus( file.getAbsolutePath() );
@@ -406,7 +406,7 @@ public class RenderNatureMethodsPaper
 		
 		// inverse corner
 		paintOutCubeIntersect( img, new int[]{ 0, 2 }, new long[]{ sliceXY + 1, 0 }, new long[]{ img.dimension( 0 ), sliceYZ }, new FloatType( 0f ) );
-
+		
 		final ImagePlus omp = Renderer.runGray(
 				imp,
 				sizeX,
@@ -448,7 +448,7 @@ public class RenderNatureMethodsPaper
 		
 		for ( final ARGBType t : out )
 		{
-			final int i = c1.next().get();
+			final int i = Math.min( 255, Math.round( c1.next().get() * 1.076f ) );
 			final int wi = c2.next().get();
 			final float w = (float)wi/(float)255;
 
@@ -464,6 +464,18 @@ public class RenderNatureMethodsPaper
 	
 	final static public void main( final String[] args ) throws Exception
 	{
+		String fileName;
+		
+		if ( args != null && args.length > 0 )
+			fileName = args[ 0 ];
+		else
+			fileName = "/Users/preibischs/Desktop/analysis/50-7/groundtruth.tif";//50-7/aligned_view_0.tif";//
+		
+		final File f = new File( fileName );
+		
+		if ( !f.exists() )
+			throw new RuntimeException( "File '" + f.getAbsolutePath() + "' does not exist." );
+		
 		new ImageJ();
 				
 		final AffineTransform3D t = new AffineTransform3D();
@@ -472,21 +484,22 @@ public class RenderNatureMethodsPaper
 		t.rotate( 0, Math.toRadians( 15 ) );
 		t.scale( 0.7 );
 		
-		final ImagePlus imp = new ImagePlus( "/Users/preibischs/Desktop/analysis/50-7/groundtruth.tif" );
+		final ImagePlus imp = new ImagePlus( fileName );
 		
-		final int sizeX = 400;
-		final int sizeY = 300;
+		final int sizeX = 800;
+		final int sizeY = 600;
 		
 		final int sliceXY = 145;
 		final int sliceYZ = 145;
 		
 		final int verticalLine = computeVerticalLine( imp, t, sizeX, sizeY, sliceXY, sliceYZ );
 		final ARGBType overlayColor = new ARGBType( ARGBType.rgba( 255, 0, 0, 0 ) );
-		
+
+		// start computing
 		ImagePlus outline = renderOutline( imp, t, sizeX, sizeY, sliceXY, sliceYZ, verticalLine );
 		outline.show();
 		
-		ImagePlus image = renderInverseCorner( imp, t, sizeX, sizeY, sliceXY, sliceYZ );
+		ImagePlus image = renderInverseCorner( imp, t, sizeX, sizeY, sliceXY, sliceYZ, f.getName() );
 		image.show();
 		
 		ImagePlus result = combineOutlineImage( image, outline, overlayColor );

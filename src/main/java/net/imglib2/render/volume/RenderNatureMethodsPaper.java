@@ -85,7 +85,7 @@ public class RenderNatureMethodsPaper
 		return "_" + sizeX + "_" + sizeY + "_" + sliceXY + "_" + sliceYZ;
 	}
 	
-	public static ImagePlus renderCornerSlices( final ImagePlus imp3d, final AffineTransform3D t, 
+	public static ImagePlus renderCornerSlices( final ImagePlus imp3d, final AffineTransform3D t, final Interpolation interpolation, 
 			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ )
 	{
 		final File file = new File( "corner_slice" + makeFileName( sizeX, sizeY, sliceXY, sliceYZ ) + ".tif" );
@@ -113,7 +113,7 @@ public class RenderNatureMethodsPaper
 				new Translation3D(),
 				1,
 				0,
-				Interpolation.LC,
+				interpolation,
 				0,
 				1,
 				1.0,
@@ -136,7 +136,7 @@ public class RenderNatureMethodsPaper
 		return (int)Math.round( r.getWidth() );
 	}
 
-	public static ImagePlus renderPlanes( final ImagePlus imp3d, final AffineTransform3D t, 
+	public static ImagePlus renderPlanes( final ImagePlus imp3d, final AffineTransform3D t, final Interpolation interpolation, 
 			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ )
 	{
 		final int borderXY = 37;
@@ -197,7 +197,7 @@ public class RenderNatureMethodsPaper
 				new Translation3D(),
 				1,
 				0,
-				Interpolation.LC,
+				interpolation,
 				0,
 				0.5,
 				1.0,
@@ -209,14 +209,14 @@ public class RenderNatureMethodsPaper
 		return omp;
 	}
 
-	public static ImagePlus renderOutline( final ImagePlus imp3d, final AffineTransform3D t, 
-			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ, final int verticalLine ) throws IncompatibleTypeException
+	public static ImagePlus renderOutline( final ImagePlus imp3d, final AffineTransform3D t, final Interpolation interpolation, 
+			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ, final int verticalLine, final boolean showAxesLabels ) throws IncompatibleTypeException
 	{
-		final ImagePlus cornerSlices = renderCornerSlices( imp3d, t, sizeX, sizeY, sliceXY, sliceYZ );	
+		final ImagePlus cornerSlices = renderCornerSlices( imp3d, t, interpolation, sizeX, sizeY, sliceXY, sliceYZ );	
 		final Img< UnsignedByteType > input = ImageJFunctions.wrapByte( cornerSlices );
 		
 		// make binary (0=bg, 1=fg)
-		final int imgBg = 5;
+		final int imgBg = 15;
 		final int bg = 0;
 		final int fg = 1;
 		for ( final UnsignedByteType b : input )
@@ -300,24 +300,29 @@ public class RenderNatureMethodsPaper
 		// flood fill the interors
 		final FloatProcessor fp = new FloatProcessor( cornerSlices.getWidth(), cornerSlices.getHeight(), outlinePx );
 		f = new FloodFiller( fp );
-		fp.setValue( (float)fg / 30.0f );
-		//f.fill( verticalLine - 1, posL );
-		//f.fill( verticalLine + 1, posR );
+		fp.setValue( (float)fg / 15.0f );
+		f.fill( verticalLine - 1, posL );
+		f.fill( verticalLine + 1, posR );
 		
 		// smooth the outline a little
 		Gauss3.gauss( 0.6, Views.extendZero( outline ), outline );
 
-		// get the labels for the slices and max them into the image
-		final ImagePlus frame = renderPlanes( imp3d, t, sizeX, sizeY, sliceXY, sliceYZ );
+		// the result
 		final ByteProcessor bpOutline = (ByteProcessor)fp.convertToByte( true );
-		
-		final Cursor< UnsignedByteType > c1 = ArrayImgs.unsignedBytes( (byte[])bpOutline.getPixels(), sizeX, sizeY ).cursor();
-		final Cursor< UnsignedByteType > c2 = ArrayImgs.unsignedBytes( (byte[])frame.getProcessor().getPixels(), sizeX, sizeY ).cursor();
-		
-		while ( c1.hasNext() )
+
+		// get the labels for the slices and max them into the image
+		if ( showAxesLabels )
 		{
-			c1.fwd(); c2.fwd();
-			c1.get().set( Math.max( Math.min( 255, Math.round( c1.get().get() * 1.25f ) ), Math.round( c2.get().get() / 1.1f ) ) );
+			final ImagePlus frame = renderPlanes( imp3d, t, interpolation, sizeX, sizeY, sliceXY, sliceYZ );
+			
+			final Cursor< UnsignedByteType > c1 = ArrayImgs.unsignedBytes( (byte[])bpOutline.getPixels(), sizeX, sizeY ).cursor();
+			final Cursor< UnsignedByteType > c2 = ArrayImgs.unsignedBytes( (byte[])frame.getProcessor().getPixels(), sizeX, sizeY ).cursor();
+			
+			while ( c1.hasNext() )
+			{
+				c1.fwd(); c2.fwd();
+				c1.get().set( Math.max( Math.min( 255, Math.round( c1.get().get() * 1.25f ) ), Math.round( c2.get().get() / 1.1f ) ) );
+			}
 		}
 		
 		// display
@@ -393,7 +398,7 @@ public class RenderNatureMethodsPaper
 		return verticalPosition;
 	}
 	
-	public static ImagePlus renderInverseCorner( final ImagePlus imp3d, final AffineTransform3D t, 
+	public static ImagePlus renderInverseCorner( final ImagePlus imp3d, final AffineTransform3D t, final Interpolation interpolation,
 			final int sizeX, final int sizeY, final int sliceXY, final int sliceYZ, final String fileName )
 	{
 		final File file = new File( "inversecorner_" + fileName + makeFileName( sizeX, sizeY, sliceXY, sliceYZ ) + ".tif" );
@@ -417,7 +422,7 @@ public class RenderNatureMethodsPaper
 				new Translation3D(),
 				1,
 				0,
-				Interpolation.LC,
+				interpolation,
 				0,
 				1,
 				1.0,
@@ -469,7 +474,7 @@ public class RenderNatureMethodsPaper
 		if ( args != null && args.length > 0 )
 			fileName = args[ 0 ];
 		else
-			fileName = "/Users/preibischs/Desktop/analysis/50-7/groundtruth.tif";//50-7/aligned_view_0.tif";//
+			fileName = "/Users/preibischs/Desktop/analysis/50-7/groundtruth.tif";
 		
 		final File f = new File( fileName );
 		
@@ -485,7 +490,7 @@ public class RenderNatureMethodsPaper
 		t.scale( 0.7 );
 		
 		final ImagePlus imp = new ImagePlus( fileName );
-		
+
 		final int sizeX = 800;
 		final int sizeY = 600;
 		
@@ -493,15 +498,17 @@ public class RenderNatureMethodsPaper
 		final int sliceYZ = 145;
 		
 		final int verticalLine = computeVerticalLine( imp, t, sizeX, sizeY, sliceXY, sliceYZ );
-		final ARGBType overlayColor = new ARGBType( ARGBType.rgba( 255, 0, 0, 0 ) );
-
+		final ARGBType overlayColor = new ARGBType( ARGBType.rgba( 255, 35, 15, 0 ) );
+		final Interpolation interpolation = Interpolation.LC;
+		final boolean showAxesLabels = false;
+		
 		// start computing
-		ImagePlus outline = renderOutline( imp, t, sizeX, sizeY, sliceXY, sliceYZ, verticalLine );
-		outline.show();
-		
-		ImagePlus image = renderInverseCorner( imp, t, sizeX, sizeY, sliceXY, sliceYZ, f.getName() );
+		ImagePlus image = renderInverseCorner( imp, t, interpolation, sizeX, sizeY, sliceXY, sliceYZ, f.getName() );
 		image.show();
-		
+
+		ImagePlus outline = renderOutline( imp, t, interpolation, sizeX, sizeY, sliceXY, sliceYZ, verticalLine, showAxesLabels );
+		outline.show();
+				
 		ImagePlus result = combineOutlineImage( image, outline, overlayColor );
 		result.show();
 		
